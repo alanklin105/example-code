@@ -1,0 +1,990 @@
+---
+title: 'Project #4 stat319'
+author: "Alan Lin"
+date: "4/26/2022"
+output: pdf_document
+---
+```{r, echo = F, message= F, warning = F}
+library(ggplot2)
+library(tidyr)
+```
+
+## Introduction 
+
+Spam emails are quite common in this digital world. Many of these are sent via mass emailing and are often detected by some algorithm in most emailing services. In this project, we attempt to identify several properties of spam emails that can help us classify emails as spam or non-spam, through a Naive Bayesian approach. See the attached paper to understand what this approach implies for us. We will be using data from Spam Assassin, https://spamassassin.apache.org/doc.html. While they have their own classification algorithm that they sell, they have also compiled over 9000 emails for training/testing algorithms. In the downloads, emails are split between being spam or not spam(known as ham). Thus, we can use these emails to build our own algorithm. We will see the Type I and II error rates and use that to judge how well our classifier is doing.
+
+### Deliverable 1: 
+
+Here we use the splitMessage function that assumes that everything before the first blank line is the header and everything after is the body of the email. First, my function will search each line in an email for an empty string, and returns the vector TRUE/FALSE statements. Then, I can find the index of the first(or even the only) TRUE statement by using min(which(x == TRUE)). Afterwords, it is just a matter of saving all lines before as the header and all lines after this empty string as the body by indexing the email. Then, we can answer the question: do the number of lines in an email header act as a good indicator of spam emails? 
+
+First, let's look at the histogram for the number of lines in an email header of all ham emails. It seems bimodal, with two peaks at around 24 lines and 50 lines. On the other hand, the distribution for the number of lines in an email header of all spam emails appears to be unimodal, centered at around 25 lines. I limited the x-axis to be between 0 and 100 lines, in order to display an accurate comparison between spam/ham emails. 
+
+Additionally, after removing the extreme outliers for spam emails (more than 4 standard deviations away), the mean number of lines in the header for spam emails is 28.51 and the standard deviation is 9.42, while the ham emails have a mean number of lines in the heaver of 40.28 and a standard deviation of 16.18 (there doesn't seem to be any extreme outliers for ham emails so none were removed). 
+
+The number of lines in an email header may not be a very good indicator because the distribution of number lines in an email header for ham emails is bimodal with a center that is pretty much the same as it is for a spam email, around 25-28. This means that it's probably hard to determine if an email is spam or not by header length alone. 
+
+```{r, echo = F, message = F, warning = F, fig.height = 3, fig.width = 6}
+
+easyham <- list.files('C:/Users/super/Documents/stat319/messages/messages/easy_ham', full.names = T)
+
+easyham2 <- list.files('C:/Users/super/Documents/stat319/messages/messages/easy_ham_2', full.names = T)
+
+hardham <- list.files('C:/Users/super/Documents/stat319/messages/messages/hard_ham', full.names = T)
+
+spam <- list.files('C:/Users/super/Documents/stat319/messages/messages/spam', full.names = T)
+
+spam2 <- list.files('C:/Users/super/Documents/stat319/messages/messages/spam_2', full.names = T)
+
+hams <- c(easyham, easyham2, hardham)
+spams <- c(spam, spam2)
+
+
+splitMessage <- function(email){
+  a <- sapply(email, function(x) which(x == ""))
+  index <- min(which(a == TRUE))
+  header <- email[1:index - 1 ]
+  body <- email[(index + 1):length(email)]
+  
+  return(list(header = header, body = body))
+}
+
+
+hamEmails <- lapply(hams, function(x) readLines(x))
+
+hamHeaders <- sapply(hamEmails, function(x) splitMessage(x)$header)
+
+hamHeaderLength <- sapply(hamHeaders, function(x) length(x))
+
+hamLength <- data.frame(length = hamHeaderLength )
+
+
+spamEmails <- lapply(spams, function(x) readLines(x))
+
+spamHeaders <- sapply(spamEmails, function(x) splitMessage(x)$header)
+
+spamHeaderLength <- sapply(spamHeaders, function(x) length(x))
+
+ggplot(data = hamLength, aes(x = length)) +
+  geom_histogram(fill = "white", color = "blue") + 
+  labs(title = "Histogram for length of headers in ham (non-spam) emails") +
+  xlim(c(0, 100))
+
+spamLengths <- spamHeaderLength[(spamHeaderLength - mean(spamHeaderLength)) / sd(spamHeaderLength) <= 4]
+
+spamLength <- data.frame(length = spamLengths )
+
+ggplot(data = spamLength, aes(x = length)) +
+  geom_histogram(fill = "white", color = "blue") + 
+  labs(title = "Histogram for length of headers in spam emails") +
+  xlim(c(0, 100))
+```
+
+```{r, eval = F, echo = F}
+
+mean(spamLengths)
+sd(spamLengths)
+
+mean(hamHeaderLength)
+sd(hamHeaderLength)
+
+```
+### Deliverable #2
+
+Here we use a new function, called hasAttachment, which takes in an email header, and checks if there is a Content-Type line. This line will sometimes contain the phrase "multipart", which indicates that there is an attachment in the email. Sometimes, there are multiple lines with "Content-Type", so we only use the first one to check if "multipart" is also in the line. The function will return True or False depending on the result. 
+
+So, if we apply this function to the headers from the harm_ham directory, we get that there are 95 emails with attachments
+
+```{r, echo = F}
+
+hasAttachment <- function(header){
+  
+  ind <- grep("content-type", header, ignore.case = T)
+  
+  if(length(ind) == 0) return(FALSE)
+  
+  grepl("multipart", header[ind[1]], ignore.case = T)
+  
+  
+}
+
+hardIndex <- 1:500
+hardFiles <- hardham[hardIndex]
+hardHamEmails <- sapply(hardFiles, function(x) readLines(x))
+
+
+hardHamHeaders <- sapply(hardHamEmails, function(x) splitMessage(x)$header)
+
+hardHam <- sapply(hardHamHeaders, function(x) hasAttachment(x))
+
+
+hardHamWAtt <- unname(which(hardHam))
+
+
+
+```
+
+Next, we have another function called getBoundary, which extracts the boundary separator from the "boundary=" line in the header of an email. There are several special cases to keep in mind. What the function does is take the line that has the "boundary=" phrase in the header using grep and split the string to two parts, before and after the "boundary=" phrase. Then, we take the string that comes after the phrase and remove characters such as empty characters, back slashes, extra double quotations, and semi-colons. Here are some examples. In some cases, although grep has the ignore.case option, strsplit does not, so I had to add a gsub line in there to change the phrase "boundary=" no matter what case it is to exactly "boundary=". This allows me to correctly find all characters to the right of the phrase and remove any unwanted characters from the string.
+
+```{r, echo = F}
+
+sampleIndex <- 1:500
+sampleFiles <- easyham[sampleIndex]
+sampleEmails <- lapply(sampleFiles, readLines)
+
+sampleHeaders <- sapply(sampleEmails, function(x) splitMessage(x)$header)
+sampleHasAttachments <- sapply(sampleHeaders, function(x) hasAttachment(x))
+emailIndWithAttachments <- which(sampleHasAttachments)
+
+getBoundary <- function(header){
+  b <- grep("boundary=", header, value = T, ignore.case = T)
+  c <- gsub("boundary=", "boundary=", b, ignore.case = T)
+  d <- strsplit(c, split = "boundary=")
+  d1 <- sapply(d, "[[", 2)
+  
+  gsub("[ \";]", "", d1)
+}
+```
+
+First, we have the 69th email in the easy_ham folder. Clearly, there's an attachment with the email. Following that is the boundary string - which we should extract all characters that aren't semi-colons, extra double quotations, or extra empty spaces. Thus, we'd expect the string "Apple-Mail-2-874629474" to return from the getBoundary function, which we see is the case. Next, we have the 404th email in the easy_ham folder; we see that there's extra double quotations that have been escaped with the backslash. There are also only numbers in this string. We'd expect the getBoundary function to return "------------090602010909000705010009", with none of the hyphens lost (since they're not considered special characters to remove from the boundary string). Finally, notice how the third example has the phrase "BOUNDARY=". The getBoundary function receives this string and replaces it with "boundary=" in order to get "EG3OZ08L.0DOB2JAQ-euro.apple.com" as the output. 
+
+```{r}
+test1 <- sampleHeaders[[69]][17]
+test1
+getBoundary(test1)
+
+
+test2 <- sampleHeaders[[404]][32]
+test2
+getBoundary(test2)
+
+test3 <- hardHamHeaders[[270]][25]
+test3
+getBoundary(test3)
+```
+
+### Deliverable 3. 
+
+
+```{r, echo = F}
+
+extractBodyText <- function(email){
+  a <- splitMessage(email)
+  if(hasAttachment(a$header)) {
+    s <- getBoundary(a$header)
+    lines <- grep(s, a$body, fixed = T)
+    if(length(lines) > 1){
+      f <- lines[1]
+      l <- lines[2]
+      return(a$body[(f+1):(l-1)])
+    } else {
+      return(a$body[-lines])
+    }
+  } else {
+    return(a$body)
+  }
+}
+
+```
+
+It seems that the directory that contains the emails with the most total words is the hard ham directory. 
+
+This result is achieved by reading each email and extracting the words using extractWords function by feeding in the body text of the email. We can parse out the body text by splitting an email using splitMessage function(explained at the beginning). 
+
+```{r, echo = F, warning = F, fig.height= 4, fig.width = 8} 
+
+extractWords <- function(body, unique = T){
+  d <- tolower(body)
+  d1 <- gsub('[^abcdefghijklmnopqrstuvwxyz]', ' ', d)
+  d2 <- gsub('\\b[[:lower:]]{1}\\b', " ", d1)
+  d3 <- grep("[[:alpha:]]", d2)
+  words <- d2[d3]
+  collapse <- paste0(words, collapse = " ")
+  un <- unlist(strsplit(collapse, " "))
+  w <- un[which(un != "")]
+  if(!unique) return (w)
+  unique(w)
+}
+
+
+easy <- lapply(easyham, function(x) readLines(x))
+easy2 <- lapply(easyham2, function(x) readLines(x))
+hardh <- lapply(hardham, function(x) readLines(x))
+sp <- lapply(spam, function(x) readLines(x))
+sp2 <- lapply(spam2, function(x) readLines(x))
+
+h <- sapply(easy, function(x) {
+  body <- extractBodyText(x)
+  length(extractWords(body))
+})
+
+
+h2 <- sapply(easy2, function(x) {
+  body <- extractBodyText(x)
+  length(extractWords(body))
+})
+
+h3 <- sapply(hardh, function(x) {
+  body <- extractBodyText(x)
+  length(extractWords(body))
+})
+
+s <- sapply(sp, function(x) {
+  body <- extractBodyText(x)
+  length(extractWords(body))
+})
+
+s2 <- sapply(sp2, function(x) {
+  body <- extractBodyText(x)
+  length(extractWords(body))
+})
+
+
+a <- list(h, h2, h3, s, s2)
+directories <- list.files("C:/Users/super/Documents/stat319/messages/messages")
+names(a) <- directories
+b <- sapply(a, function(x) log(x))
+
+ind <- sapply(b, length)
+data <- as.data.frame(do.call(cbind, lapply(b, `length<-`, max(ind))))
+
+
+new.data <- pivot_longer(data, directories)
+names(new.data) <- c("Directory", "value")
+
+ggplot(new.data, aes(x = Directory, y= value, col = Directory))+ geom_boxplot() + theme(axis.text.x = element_text(angle = 45, vjust = 0.5)) + labs(x = "Directory", y = "log of total number of words") + ggtitle("Distribution of log of total number of words in each body \n of each email in each directory") 
+```
+
+```{r,echo = F, warning = F}
+readEmailDirectory <- function(directory) {
+  str <- "C:/Users/super/Documents/stat319/"
+  str1 <- paste(str, directory, sep = "")
+  
+  emails <- list.files(str1, full.names = T)
+  lapply(emails, function(x) readLines(x))
+}
+
+spam <- readEmailDirectory("messages/messages/spam")
+
+spam2 <- readEmailDirectory("messages/messages/spam_2")
+
+easyham <- readEmailDirectory("messages/messages/easy_ham")
+
+easyham2 <- readEmailDirectory("messages/messages/easy_ham_2")
+
+hardham <- readEmailDirectory("messages/messages/hard_ham")
+
+
+spamBody <- lapply(spam, function(x) extractBodyText(x))
+
+spam2Body <- lapply(spam2, function(x) extractBodyText(x))
+
+ham <- lapply(easyham, function(x) extractBodyText(x))
+
+ham2 <- lapply(easyham2, function(x) extractBodyText(x))
+
+ham3 <- lapply(hardham, function(x) extractBodyText(x))
+
+spamUwords <- lapply(spamBody, function(x) extractWords(x, unique = T))
+                     
+spamUwords2 <- lapply(spam2Body, function(x) extractWords(x, unique = T))    
+
+
+hamUwords <- lapply(ham, function(x) extractWords(x, unique = T))
+
+hamUwords2 <- lapply(ham2, function(x) extractWords(x, unique = T))
+
+hamUwords3 <- lapply(ham3, function(x) extractWords(x, unique = T))
+
+emailsAll <- c(spamUwords, spamUwords2, hamUwords, hamUwords2, hamUwords3)
+
+isSpam <- c( rep(TRUE, length(c(spamUwords, spamUwords2))), rep(FALSE, length(c(hamUwords, hamUwords2, hamUwords3))))
+            
+     
+```
+
+### Deliverable #4
+
+Here we see a histogram showing the densities for the number of unique words appearing in spam/non-spam emails. It's easy to tell apart the two distributions, red for ham, blue for spam, purple is where they overlap. They seem to be heavily right skewed, with the bulk of values falling between 0-200 words for both distributions. This makes it seem that the number of unique words appearing in an email isn't very useful to help identify spam emails. The distribution for ham and spam isn't very distinct from one another. 
+
+```{r, echo = F, warning = F, fig.height=4, fig.width = 8}
+
+
+haml <- sapply(emailsAll[which(isSpam == FALSE)], length)
+spaml <- sapply(emailsAll[which(isSpam == TRUE)], length)
+
+
+d <- data.frame(value = c(haml, spaml), spam = isSpam)
+
+ggplot(d, aes(value, fill = spam)) + 
+  geom_density(show.legend = T, alpha = 0.5) +
+  theme_minimal()+ 
+  xlim(0,2000) +
+  scale_fill_manual(values = c("FALSE" = "red", "TRUE" = "blue")) +
+  labs(title = "Histogram(densities) of number of unique words in emails")
+
+
+```
+### Deliverable 5. See attached paper for the derivation of the Bayes Factor.
+
+
+```{r, echo = F}
+set.seed(0)
+
+testspam <- sample(which(isSpam == TRUE), 799, replace = F)
+
+trainspam <- setdiff(which(isSpam == TRUE), testspam)
+
+
+
+testham <- sample(which(isSpam == FALSE), 2317, replace = F)
+
+
+trainham <- setdiff(which(isSpam == FALSE), testham)
+
+emailsTrain <- emailsAll[c(trainspam, trainham)]
+emailsTest <- emailsAll[c(testspam, testham)]
+
+
+isSpamTrain <- c(rep(TRUE, length(trainspam)), rep(FALSE, length(trainham)))
+
+isSpamTest <- c(rep(TRUE, length(testspam)), rep(FALSE, length(testham)))
+
+
+bow <- unique(unlist(emailsTrain))
+
+spamCount <- table(unlist(emailsTrain[isSpamTrain]))
+hamCount <- table(unlist(emailsTrain[!isSpamTrain]))
+
+nSpamTrain <- length(trainspam)
+nHamTrain <- length(trainham)
+
+d <- data.frame(spamCount)
+bow1 <- bow[!(bow %in% names(spamCount))]
+c <- rep(0, length(bow1))
+d1 <- data.frame(Var1 = bow1, Freq = c)
+d2 <- rbind(d,d1)
+spamCount <- setNames(d2$Freq, d2$Var1)
+
+
+bow2 <- bow[!(bow %in% names(hamCount))]
+c1 <- rep(0, length(bow2))
+d3 <- data.frame(hamCount)
+d4 <- data.frame(Var1 = bow2, Freq = c1)
+d5 <- rbind(d3, d4)
+
+hamCount <- setNames(d5$Freq, d5$Var1)
+
+
+probPresentSpam <- (spamCount + 0.1)/(nSpamTrain + 0.1)
+logProbPresentSpam <- log(probPresentSpam)
+
+probAbsentSpam <- (nSpamTrain - spamCount + 0.1)/(nSpamTrain + 0.1)
+logProbAbsentSpam <- log(probAbsentSpam)
+
+probPresentHam <- (hamCount + 0.1)/(nHamTrain + 0.1)
+logProbPresentHam <- log(probPresentHam)
+
+probAbsentHam <- (nHamTrain - hamCount + 0.1)/(nHamTrain + 0.1)
+logProbAbsentHam <- log(probAbsentHam)
+
+
+```
+
+
+### Deliverable #6
+
+### a) How many times more likely is the word "monday" to appear in a non-spam versus a spam email?
+
+What we can do is find the probability that "78" appears in a non-spam email and divide that by the probability that "monday" appears in a spam email. We already have a named vector of words for the probabilities of each word in spam/non-spam emails, so we can simply look for the word "monday" in each named vector and find the ratio of non-spam to spam probabilities.
+
+It seems that "monday" is 4.952 times as likely to appear in a non-spam email than a spam email. 
+
+### b) How many times more likely is the word "buy" to appear in a spam vs. a non-spam email?
+
+Using the same principle as earlier, we search for the word "buy" in the named vector and find the ratio of probabilities, which comes out to be 2.279 times more likely to appear in a spam email vs. a non-spam email.
+
+
+```{r, echo = F, eval = F}
+probPresentHam["monday"]/probPresentSpam["monday"]
+probPresentSpam["buy"]/probPresentHam["buy"]
+```
+
+```{r, echo = F}
+computeBF <- function(uWords) {
+  uWords1 <- bow[which(bow %in% uWords)]
+  bow1 <- bow[which(!(bow %in% uWords1))]
+  
+  wSpamPresent <- logProbPresentSpam[uWords1]
+  
+  wSpamAbsent <- logProbAbsentSpam[bow1]
+  
+  wHamPresent <- logProbPresentHam[uWords1]
+  
+  wHamAbsent <- logProbAbsentHam[bow1]
+  
+  sum(wSpamAbsent, wSpamPresent) - sum(wHamPresent, wHamAbsent)
+}
+
+
+```
+
+### Deliverable 7:
+
+Here we use the computeBF function on all emails in the training set, and separates them based on if they're spam or not. Thus, we have two groups and we can create a side-by-side boxplot for the distribution of the log Bayes Factors for each group, while setting the y-limits of the plot to a narrow scope of interest (around -250 to 350).
+
+We see that the log BF of the spam emails are on average positive, with more than 75% of the emails above 0, while almost all the ham emails have log BF of 0 or below. Thus, I'd estimate that a good threshold value (c) for classifying when an email is spam is going to be in low negative numbers, possibly around -5 to -10. This allows us to capture more spam emails while also reducing the number of ham emails being classified as spam. This is visualized with the red horizontal line at -5. We see that there are very few ham emails that are caught and around 80% of spam emails that are above this threshold. 
+
+```{r, fig.height = 4, fig.width = 8, echo = F, warning = F}
+spam <- sapply(emailsTrain[isSpamTrain], function(x) computeBF(x))
+
+ham <- sapply(emailsTrain[!isSpamTrain], function(x) computeBF(x))
+
+h <- data.frame(bf = ham, type = rep("ham", length(ham)))
+s <- data.frame(bf = spam, type = rep("spam", length(spam)))
+
+bf <- rbind(h,s)
+
+ggplot(bf, aes(x = type, y = bf)) + geom_boxplot(aes(fill = type)) + ylim(-250, 350) + labs(title = "(log) Bayes Factors for spam/ham emails") + geom_hline(yintercept = -5, col= "red")
+```
+
+
+### Deliverable 8
+
+First we need to find the log BF for emails in the test set. We can do that easily by just feeding each email in the test set to the computeBF function by sapply. After that, we can use lapply on a sequence of possible threshold (c) values to generate a vector of boolean values that correspond to whether the log BF value is greater or equal to the threshold value. A value of TRUE will indicate an email being classified as spam. Thus, by finding the number of non-spam emails that have TRUE and dividing by the number of non-spam emails in the test set, we can find the Type 1 error, or the false detection error. Similarly, we find the number of spam emails that have FALSE and divide by the number of spam emails in the test set, we have the Type II error, or spam emails that were wrongly classified as ham. 
+
+Then, we simply plot these values into a scatterplot with two lines, where we can see that at low values of c (really negative!), Type I error rate is high, or that many emails are wrongly classified as spam when they're not. At the same time, as the values of c increase, only a small number of emails are classified as spam, so the Type II error rates are pretty high because we mistakenly classified a lot of spam emails as ham.
+
+```{r, echo = F, fig.height = 4, fig.width = 8}
+testBF <- sapply(emailsTest, function(x) computeBF(x))
+
+cvalues <- seq(-200, 200, by = 0.5)
+nSpamTest <- length(which(isSpamTest))
+nHamTest <- length(which(!isSpamTest))
+
+errorRates <- lapply(cvalues, function(x){
+  bf <- testBF >= x
+  
+  t1 <- length(which(bf[!isSpamTest]))/nHamTest 
+  t2 <- length(which(!bf[isSpamTest]))/nSpamTest
+  return(c(t1, t2))
+})
+
+t1 <- sapply(errorRates, '[[', 1)
+d1 <- data.frame(c = cvalues, error = rep("typeI", length(t1)), value = t1)
+
+t2 <- sapply(errorRates, '[[', 2)
+d2 <- data.frame(c = cvalues, error = rep("typeII", length(t2)), value = t2)
+
+test <- rbind(d1,d2)
+
+ggplot(test, aes(x = c, y = value, group)) + 
+  geom_line(aes(col = error)) +
+  labs(y = "error rate", title = "Type I/II error rates at different values of c (threshold)")
+  
+```
+
+
+### Deliverable 9
+
+Assuming we want to equal Type I and Type II error rates, the value of c that most nearly achieves this is around -49. The Type I error at this threshold value is 0.0134 and the Type II error is 0.0113
+
+That means the classifier is wrongly classifying ham emails as spam 1.34% of the time and mistaking spam emails as ham 1.13% of the time. 
+
+```{r, echo = F, fig.height= 4, fig.width = 8}
+ggplot(test, aes(x = c, y = value, group)) + 
+  geom_line(aes(col = error)) +
+  labs(y = "error rate", title = "Type I/II error rates at different values of c (threshold)") +
+  geom_vline(xintercept  = -49)
+  
+
+t1[which(cvalues == -49)]
+t2[which(cvalues == -49)]
+```
+
+
+### Deliverable 10
+
+If we want Type I error to be less than 0.001, the smallest Type II error rate that we can achieve is 0.6446, or an error rate of 64.46%. That means that although we rarely classify ham emails as spam(0.1% chance), there is an extremely high chance (64.46%) that we let a spam email slip through as ham. Thus, our spam classifier is keeping most legitimate emails in the inbox but also many spam emails. This reciprocal behavior is the cost of choosing to minimize one type of error over the other.
+
+```{r, echo = F}
+t <- t1 < 0.001
+
+t2[min(which(t))]
+
+
+
+```
+
+
+
+### Extension
+
+
+
+I will be grabbing the 500 most common words from this website: https://www.smart-words.org/500-most-commonly-used-english-words.html, with which I will then grab only the "short" words(3 or less characters). Though there are many words here, the shorter ones tend to be the pronouns, prepositions, and conjuctions, etc, which may not be very indicative of a spam email. Then I can filter these common words out from the vector of words in each body text. I will also be removing common features of a website, especially the top level domain extension such as "com", "org", and many more that I found from https://www.icdsoft.com/blog/what-are-the-most-popular-tlds-domain-extensions/. From there, we calculate log probabilities and use computeBF as we did before. We can check to see if this helps the classifier by looking at the Type I and Type II error rate when they are equivalent, as well as finding the smallest Type II error rate that goes with a Type 1 error rate of less than 0.1%. Looking at the graph, we see that the threshold for which the two error rates are similar to each other is at around -66, where the Type I error is 0.0518 and the Type II error is 0.0526. Both of these values are larger than they were before removing the common words from the body texts, which suggests that it may not be useful to remove them because the error rates for both types are larger than they were when the common words were still in the emails. In addition, in order to achieve a Type I error rate of 0.1%, the threshold value is set at 462.5, where the Type II error rate is 92.87%. This is much higher than previously found, which continues to suggest that removing these common words and website characteristics might not conducive to classifying spam emails. Perhaps they rely on many of these words because they are simple and really help make a message more direct, such as stating, "YOU could really benefit from it" or linking a suspicious website in the case of scam emails or just a simple algorithm putting together simple short words in an automated spam email generator. 
+
+
+```{r, echo = F, fig.height = 4, fig.width= 8, warning = F, message = F}
+
+common <- "the of to and a in is it you that he was for on are with as I his they be at one have this from or had by hot but some what there we can out other were all your when up use word how said an each she which do their time if will way about many then them would write like so these her long make thing see him two has look more day could go come did my sound no most number who over know water than call first people may down side been now find any new work part take get place made live where after back little only round man year came show every good me give our under name very through just form much great think say help low line before turn cause same mean differ move right boy old too does tell sentence set three want air well also play small end put home read hand port large spell add even land here must big high such follow act why ask men change went light kind off need house picture try us again animal point mother world near build self earth father head stand own page should country found answer school grow study still learn plant cover food sun four thought let keep eye never last door between city tree cross since hard start might story saw far sea draw left late run don't while press close night real life few stop open seem together next white children begin got walk example ease paper often always music those both mark book letter until mile river car feet care second group carry took rain eat room friend began idea fish mountain north once base hear horse cut sure watch color face wood main enough plain girl usual young ready above ever red list though feel talk bird soon body dog family direct pose leave song measure state product black short numeral class wind question happen complete ship area half rock order fire south problem piece told knew pass farm top whole king size heard best hour better TRUE during hundred am remember step early hold west ground interest reach fast five sing listen six table travel less morning ten simple several vowel toward war lay against pattern slow center love person money serve appear road map science rule govern pull cold notice voice fall power town fine certain fly unit lead cry dark machine note wait plan figure star box noun field rest correct able pound done beauty drive stood contain front teach week final gave green oh quick develop sleep warm free minute strong special mind behind clear tail produce fact street inch lot nothing course stay wheel full force blue object decide surface deep moon island foot yet busy test record boat common gold possible plane age dry wonder laugh thousand ago ran check game shape yes hot miss brought heat snow bed bring sit perhaps fill east weight language among"
+
+
+
+
+common1 <- unlist(strsplit(common, " "))
+
+common2 <- common1[which(nchar(common1) < 4)]
+
+
+website <- c("http","net","com","www","org", "gov","in","uk","au","ir","de","ca", "ru", "icu","info","top","xyz","tk","cn","cf","nl")
+
+extractWords1 <- function(body, unique = T){
+  d <- tolower(body)
+  d1 <- gsub('[^abcdefghijklmnopqrstuvwxyz]', ' ', d)
+  d2 <- gsub('\\b[[:lower:]]{1}\\b', " ", d1)
+  d3 <- grep("[[:alpha:]]", d2)
+  words <- d2[d3]
+  collapse <- paste0(words, collapse = " ")
+  un <- unlist(strsplit(collapse, " "))
+  w <- un[which(un != "")]
+  w1 <- w[which(!(w %in% common2))]
+  w2 <- w1[which(!(w1 %in% website))]
+  if(!unique) return (w2)
+  unique(w2)
+}
+
+
+spamUwords.1 <- lapply(spamBody, function(x) extractWords1(x, unique = T))
+                     
+spamUwords2.1 <- lapply(spam2Body, function(x) extractWords1(x, unique = T))    
+
+
+hamUwords.1 <- lapply(ham, function(x) extractWords1(x, unique = T))
+
+hamUwords2.1 <- lapply(ham2, function(x) extractWords1(x, unique = T))
+
+hamUwords3.1 <- lapply(ham3, function(x) extractWords1(x, unique = T))
+
+emailsAll.1 <- c(spamUwords.1, spamUwords2.1, hamUwords.1, hamUwords2.1, hamUwords3.1)
+
+isSpam.1 <- c( rep(TRUE, length(c(spamUwords.1, spamUwords2.1))), rep(FALSE, length(c(hamUwords.1, hamUwords2.1, hamUwords3.1))))
+            
+set.seed(0)
+
+testspam.1 <- sample(which(isSpam.1 == TRUE), 799, replace = F)
+
+trainspam.1 <- setdiff(which(isSpam.1 == TRUE), testspam.1)
+
+
+
+testham.1 <- sample(which(isSpam.1 == FALSE), 2317, replace = F)
+
+
+trainham.1 <- setdiff(which(isSpam.1 == FALSE), testham.1)
+
+emailsTrain.1 <- emailsAll.1[c(trainspam.1, trainham.1)]
+emailsTest.1 <- emailsAll.1[c(testspam.1, testham.1)]
+
+
+isSpamTrain.1 <- c(rep(TRUE, length(trainspam.1)), rep(FALSE, length(trainham.1)))
+
+isSpamTest.1 <- c(rep(TRUE, length(testspam.1)), rep(FALSE, length(testham.1)))
+
+
+bow.1 <- unique(unlist(emailsTrain.1))
+
+spamCount.1 <- table(unlist(emailsTrain.1[isSpamTrain.1]))
+hamCount.1 <- table(unlist(emailsTrain.1[!isSpamTrain.1]))
+
+nSpamTrain.1 <- length(trainspam.1)
+nHamTrain.1 <- length(trainham.1)
+
+d.1 <- data.frame(spamCount.1)
+bow1.1 <- bow.1[!(bow.1 %in% names(spamCount.1))]
+c.1 <- rep(0, length(bow1.1))
+d1.1 <- data.frame(Var1 = bow1.1, Freq = c.1)
+d2.1 <- rbind(d.1,d1.1)
+spamCount.1 <- setNames(d2.1$Freq, d2.1$Var1)
+
+
+bow2.1 <- bow.1[!(bow.1 %in% names(hamCount.1))]
+c1.1 <- rep(0, length(bow2.1))
+d3.1 <- data.frame(hamCount.1)
+d4.1 <- data.frame(Var1 = bow2.1, Freq = c1.1)
+d5.1 <- rbind(d3.1, d4.1)
+
+hamCount.1 <- setNames(d5.1$Freq, d5.1$Var1)
+
+
+probPresentSpam.1 <- (spamCount.1 + 0.1)/(nSpamTrain.1 + 0.1)
+logProbPresentSpam.1 <- log(probPresentSpam.1)
+
+probAbsentSpam.1 <- (nSpamTrain.1 - spamCount.1 + 0.1)/(nSpamTrain.1 + 0.1)
+logProbAbsentSpam.1 <- log(probAbsentSpam.1)
+
+probPresentHam.1 <- (hamCount.1 + 0.1)/(nHamTrain.1 + 0.1)
+logProbPresentHam.1 <- log(probPresentHam.1)
+
+probAbsentHam.1 <- (nHamTrain.1 - hamCount.1 + 0.1)/(nHamTrain.1 + 0.1)
+logProbAbsentHam.1 <- log(probAbsentHam.1)
+
+
+testBF.1 <- sapply(emailsTest.1, function(x) computeBF(x))
+
+cvalues.1 <- seq(-200, 500, by = 0.5)
+nSpamTest.1 <- length(which(isSpamTest.1))
+nHamTest.1 <- length(which(!isSpamTest.1))
+
+errorRates.1 <- lapply(cvalues.1, function(x){
+  bf <- testBF.1 >= x
+  
+  t1 <- length(which(bf[!isSpamTest.1]))/nHamTest.1 
+  t2 <- length(which(!bf[isSpamTest.1]))/nSpamTest.1
+  return(c(t1, t2))
+})
+
+t1.1 <- sapply(errorRates.1, '[[', 1)
+d1.1 <- data.frame(c = cvalues.1, error = rep("typeI", length(t1.1)), value = t1.1)
+
+t2.1 <- sapply(errorRates.1, '[[', 2)
+d2.1 <- data.frame(c = cvalues.1, error = rep("typeII", length(t2.1)), value = t2.1)
+
+test.1 <- rbind(d1.1,d2.1)
+
+ggplot(test.1, aes(x = c, y = value, group)) + 
+  geom_line(aes(col = error)) +
+  labs(y = "error rate", title = "Type I/II error rates at different values of c (threshold)") +
+  geom_vline(xintercept = -66)  +
+  theme_bw()
+
+t1.1[which(cvalues == -66)]
+t2.1[which(cvalues == -66)]
+
+t.1 <- t1.1 < 0.001
+
+t2.1[min(which(t.1))]
+
+
+```
+
+We can also test our classifier on my own emails.
+
+Here I have 30 ham emails and 33 spam emails. Let's use the extractWords function that keeps the common words and the website features because I've shown that removing those words seems to worsen the effectiveness of the spam classifier. 
+
+It seems that using the logprobabilities from the training set from before leads the classifier to require a much higher threshold value in the positives(!) to distinguish between spam and ham emails. When the error rates are similar, the classifier actually doesn't really know how to tell spam from ham, since the error rates are around 50%. In addition, at it's minimum, Type I error can go down to around 7%, while the Type II error plateaus around 70%. Neither of these percentages are really that good, so it seems that the sample emails from my spam folder and some emails from my inbox are giving our classifier a hard time because it is almost 50/50 at marking a spam email as ham or marking a ham email as spam. Perhaps my choice of emails may not have been the best, as some of it were from mailing listserves, so it has the format of a mass email, which could be very similar to qualities found in spam emails. 
+
+```{r, echo = F, fig.height = 4, fig.width = 8, message = F, warning = F}
+ownham <- readEmailDirectory("/owngmail/ham")
+ownspam <- readEmailDirectory("/owngmail/spam")
+
+ownspamBody <- lapply(ownspam, function(x) extractBodyText(x))
+ownhamBody <- lapply(ownham, function(x) extractBodyText(x))
+
+ouSpamWords <- lapply(ownspamBody, function(x) extractWords(x))
+ouHamWords <- lapply(ownhamBody, function(x) extractWords(x))
+
+
+
+emailsTest <- c(ouSpamWords, ouHamWords)
+isSpamTest <- c(rep(TRUE, length(ouSpamWords)), rep(FALSE, length(ouHamWords)))
+
+
+testBF <- sapply(emailsTest, function(x) computeBF(x))
+
+
+cvalues <- seq(-200, 1000, by = 0.5)
+nSpamTest <- length(which(isSpamTest))
+nHamTest <- length(which(!isSpamTest))
+
+errorRates <- lapply(cvalues, function(x){
+  bf <- testBF >= x
+  
+  t1 <- length(which(bf[!isSpamTest]))/nHamTest 
+  t2 <- length(which(!bf[isSpamTest]))/nSpamTest
+  return(c(t1, t2))
+})
+
+t1 <- sapply(errorRates, '[[', 1)
+d1 <- data.frame(c = cvalues, error = rep("typeI", length(t1)), value = t1)
+
+t2 <- sapply(errorRates, '[[', 2)
+d2 <- data.frame(c = cvalues, error = rep("typeII", length(t2)), value = t2)
+
+test <- rbind(d1,d2)
+
+ggplot(test, aes(x = c, y = value, group)) + 
+  geom_line(aes(col = error)) +
+  labs(y = "error rate", title = "Type I/II error rates at different values of c (threshold)") + theme_bw()
+  
+
+```
+My last extension attempts to divide the corpus of emails into three groups, in order to finetune the threshhold value of c for the testing set. What I'm going to do is use the training set to create the bag of words, and logprobabilities that will then be tested on the cross validation set, which will help me narrow down a threshold value of c that is associated with equivalent error rates for Type I and Type II errors. Then, using that threshold value of c, I will evaluate the error rates for both Type I and II errors of the test set. 
+
+As we can see, the threshold value that results in similar error rates is around -51. So, let's quickly find the associated error rates at that threshold value. The type I error rate is 1.38% and the type II error rate is 1.76%. That's not too bad... marking a ham email as spam 1.38% of the time is pretty good and marking a spam email as ham at 1.76% of the time is pretty darn good.
+
+So, perhaps we could look at the threshold value that reduces type I error to .01%. We find that the first occurrence of Type I error rate going below .01% is when the threshold value is set at 23.5. So, how does the testing set do at this threshold? Well, the Type I error rises to 0.04%, while the Type II error jumps up from 1.76% to 28.16%. That's not a horrible tradeoff. Either option is good depending on priorities.
+
+```{r, echo = F, fig.height = 4, fig.width = 8}
+emailsAll <- c(spamUwords, spamUwords2, hamUwords, hamUwords2, hamUwords3)
+
+isSpam <- c(rep(TRUE, length(c(spamUwords, spamUwords2))), rep(FALSE, length(c(hamUwords, hamUwords2, hamUwords3))))
+            
+set.seed(0)
+
+s <- which(isSpam)
+
+s1 <- sample(s)
+
+s2 <- split(s1, 1:3)
+
+trainSpam <- s2[[1]] 
+crossSpam <- s2[[2]] 
+testSpam <- s2[[3]]
+
+s.1 <- which(!isSpam)
+
+s1.1 <- sample(s.1)
+s2.1 <- split(s1.1, 1:3)
+
+trainHam <- s2.1[[1]]
+crossHam <- s2.1[[2]]
+testHam <- s2.1[[3]]
+
+trainEmails <- emailsAll[c(trainSpam, trainHam)]
+isSpamTrain <- c(rep(TRUE, length(trainSpam)), rep(FALSE, length(trainHam)))
+
+crossEmails <- emailsAll[c(crossSpam, crossHam)]
+isSpamCross <- c(rep(TRUE, length(crossSpam)), rep(FALSE, length(crossHam)))
+
+testEmails <- emailsAll[c(testSpam, testHam)]
+isSpamTest <- c(rep(TRUE, length(testSpam)), rep(FALSE, length(testHam)))
+
+
+bow <- unique(unlist(trainEmails))
+
+spamCount <- table(unlist(trainEmails[isSpamTrain]))
+hamCount <- table(unlist(trainEmails[!isSpamTrain]))
+
+nSpamTrain <- length(trainSpam)
+nHamTrain <- length(trainHam)
+
+d <- data.frame(spamCount)
+bow1 <- bow[!(bow %in% names(spamCount))]
+c <- rep(0, length(bow1))
+d1 <- data.frame(Var1 = bow1, Freq = c)
+d2 <- rbind(d,d1)
+spamCount <- setNames(d2$Freq, d2$Var1)
+
+
+bow2 <- bow[!(bow %in% names(hamCount))]
+c1 <- rep(0, length(bow2))
+d3 <- data.frame(hamCount)
+d4 <- data.frame(Var1 = bow2, Freq = c1)
+d5 <- rbind(d3, d4)
+
+hamCount <- setNames(d5$Freq, d5$Var1)
+
+
+probPresentSpam <- (spamCount + 0.1)/(nSpamTrain + 0.1)
+logProbPresentSpam <- log(probPresentSpam)
+
+probAbsentSpam <- (nSpamTrain - spamCount + 0.1)/(nSpamTrain + 0.1)
+logProbAbsentSpam <- log(probAbsentSpam)
+
+probPresentHam <- (hamCount + 0.1)/(nHamTrain + 0.1)
+logProbPresentHam <- log(probPresentHam)
+
+probAbsentHam <- (nHamTrain - hamCount + 0.1)/(nHamTrain + 0.1)
+logProbAbsentHam <- log(probAbsentHam)
+
+######################## time for cross validation
+
+testBF <- sapply(crossEmails, function(x) computeBF(x))
+
+cvalues <- seq(-200, 200, by = 0.5)
+nSpamCross <- length(which(isSpamCross))
+nHamCross <- length(which(!isSpamCross))
+
+errorRates <- lapply(cvalues, function(x){
+  bf <- testBF >= x
+  
+  t1 <- length(which(bf[!isSpamCross]))/nHamCross 
+  t2 <- length(which(!bf[isSpamCross]))/nSpamCross
+  return(c(t1, t2))
+})
+
+t1 <- sapply(errorRates, '[[', 1)
+d1 <- data.frame(c = cvalues, error = rep("typeI", length(t1)), value = t1)
+
+t2 <- sapply(errorRates, '[[', 2)
+d2 <- data.frame(c = cvalues, error = rep("typeII", length(t2)), value = t2)
+
+test <- rbind(d1,d2)
+
+ggplot(test, aes(x = c, y = value, group)) + 
+  geom_line(aes(col = error)) +
+  labs(y = "error rate", title = "Type I/II error rates at different values of c (threshold)") +
+  geom_vline(xintercept = -51)
+
+
+testBF1 <- sapply(testEmails, function(x) computeBF(x))
+
+nSpamTest <- length(which(isSpamTest))
+nHamTest <- length(which(!isSpamTest))
+
+bf.1 <- testBF1 >= -51
+t1.1 <- length(which(bf.1[!isSpamTest]))/nHamTest
+t2.1 <- length(which(!bf.1[isSpamTest]))/nSpamTest
+
+c(t1.1,t2.1)
+
+t.1 <- t1 < 0.001
+
+cvalues[min(which(t.1))]
+
+bf.2 <- testBF1 >= 23.5
+t1.2 <- length(which(bf.2[!isSpamTest]))/nHamTest
+t2.2 <- length(which(!bf.2[isSpamTest]))/nSpamTest
+
+c(t1.2,t2.2)
+```
+
+
+
+## Appendix
+
+Code for splitMessage function. Returns a list of header and body of email.
+
+```{r}
+splitMessage <- function(email){
+  a <- sapply(email, function(x) which(x == ""))
+  index <- min(which(a == TRUE))
+  header <- email[1:index - 1 ]
+  body <- email[index + 1:length(email)]
+  
+  return(list(header = header, body = body))
+}
+```
+
+Code for hasAttachment function. Returns boolean whether or not the phrase "multipart" appears where there is a Content-type line. This indicates the email has an attachment. 
+
+```{r}
+hasAttachment <- function(header){
+  
+  ind <- grep("content-type", header, ignore.case = T)
+  
+  if(length(ind) == 0) return(FALSE)
+  
+  grepl("multipart", header[ind[1]], ignore.case = T)
+  
+  
+}
+```
+
+
+Code for getBoundary function. Handles multiple special cases.
+
+```{r}
+getBoundary <- function(header){
+  b <- grep("boundary=", header, value = T, ignore.case = T)
+  c <- gsub("boundary=", "boundary=", b, ignore.case = T)
+  d <- strsplit(c, split = "boundary=")
+  d1 <- sapply(d, "[[", 2)
+  
+  gsub("[ \";]", "", d1)
+}
+
+
+``` 
+
+extractBodyText function, returns body text, lines of the email that are found between the first boundary line and the second boundary line.
+
+```{r}
+
+extractBodyText <- function(email){
+  a <- splitMessage(email)
+  if(hasAttachment(a$header)) {
+    s <- getBoundary(a$header)
+    lines <- grep(s, a$body, fixed = T)
+    if(length(lines) > 1){
+      f <- lines[1]
+      l <- lines[2]
+      return(a$body[(f+1):(l-1)])
+    } else {
+      return(a$body[-lines])
+    }
+  } else {
+    return(a$body)
+  }
+}
+
+```
+
+
+extractWords function, Returns a vector of unique words by default, total words if prompted by setting unique = f. 
+
+```{r}
+extractWords <- function(body, unique = T){
+  d <- tolower(body)
+  d1 <- gsub('[^abcdefghijklmnopqrstuvwxyz]', ' ', d)
+  d2 <- gsub('\\b[[:lower:]]{1}\\b', " ", d1)
+  d3 <- grep("[[:alpha:]]", d2)
+  words <- d2[d3]
+  collapse <- paste0(words, collapse = " ")
+  un <- unlist(strsplit(collapse, " "))
+  w <- un[which(un != "")]
+  if(!unique) return (w)
+  unique(w)
+}
+```
+
+Have the option to read in 5 different directories, corresponding to its name: easy_ham, easy_ham2, hard_ham, spam, spam2. Give one of those into the function and it will return the emails within the directory.
+```{r}
+readEmailDirectory <- function(directory) {
+  str <- "C:/Users/super/Documents/stat319/messages/messages/"
+  str1 <- paste(str, directory, sep = "")
+  
+  emails <- list.files(str1, full.names = T)
+  lapply(emails, function(x) readLines(x))
+}
+```
+
+Computes the associated log Bayes Factor for a given set of unique words in the body of an email.
+
+```{r, echo = F}
+computeBF <- function(uWords) {
+  uWords1 <- bow[which(bow %in% uWords)]
+  bow1 <- bow[which(!(bow %in% uWords1))]
+  
+  wSpamPresent <- logProbPresentSpam[uWords1]
+  
+  wSpamAbsent <- logProbAbsentSpam[bow1]
+  
+  wHamPresent <- logProbPresentHam[uWords1]
+  
+  wHamAbsent <- logProbAbsentHam[bow1]
+  
+  sum(wSpamAbsent, wSpamPresent) - sum(wHamPresent, wHamAbsent)
+}
+
+
+```
+
+Revised version of extractWords that filters out common short words and website features.
+```{r}
+extractWords1 <- function(body, unique = T){
+  d <- tolower(body)
+  d1 <- gsub('[^abcdefghijklmnopqrstuvwxyz]', ' ', d)
+  d2 <- gsub('\\b[[:lower:]]{1}\\b', " ", d1)
+  d3 <- grep("[[:alpha:]]", d2)
+  words <- d2[d3]
+  collapse <- paste0(words, collapse = " ")
+  un <- unlist(strsplit(collapse, " "))
+  w <- un[which(un != "")]
+  w1 <- w[which(!(w %in% common2))]
+  w2 <- w1[which(!(w1 %in% website))]
+  if(!unique) return (w2)
+  unique(w2)
+}
+```
+

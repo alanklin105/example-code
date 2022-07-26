@@ -1,0 +1,326 @@
+---
+title: 'Project #2 stat319'
+author: "Alan Lin"
+date: "3/15/2022"
+output: pdf_document
+---
+
+## Lecture 1. 
+
+### 1. How many observations is there salary information for? What range of years is there salary information for?
+
+```{r, include = F, cache = T }
+library(RSQLite)
+
+driver <- dbDriver("SQLite")
+con <- dbConnect(driver, dbname = "C:/Users/super/Downloads/lahman2016.sqlite")
+
+dbListTables(con)
+dbListFields(con, "Salaries")
+
+``` 
+
+
+There are 26428 observations of salary information. The range of years is 1985 - 2016.
+```{r, include =F, cache = T}
+salaries <- dbGetQuery(con, '
+SELECT yearID, salary, lgID
+FROM Salaries
+')
+
+nrow(salaries)
+c(min(salaries$yearID), max(salaries$yearID))
+```
+
+### 2. Create a scatter plot showing salaries plotted versus year. 
+
+```{r, echo = F, cache = T}
+options(scipen = 5)
+plot(jitter(salaries$yearID), salaries$salary, pch = '.', xlab = "Year", ylab = "Salary", main = "Salaries plotted for each year") 
+```
+
+### 3. Create a similar plot using smoothScatter
+
+
+The high-density regions of points is the darkest shade of blue which indicates that the salaries are pretty low, though the scale would possibly indicate below 1 million a year, with several players that make more than 30 million a year.
+
+```{r, echo = F, cache = T}
+smoothScatter(salaries$yearID, salaries$salary)
+```
+
+### 4. Fit a multiple linear regression model for salaries, using two predictor variables: year, and league, and interpret the coefficients. 
+
+If we don't count the years as factors, the model can be interpreted that, players in the year 0(really?) and the AL league can expect to have start with a salary of -271,424,769 that increases by 136,738 with each year, so that an AL player in the year 2000 would increase their starting salary by 273,476,000, which would be around 2 million dollars. A player in the NL league would just start at a lower salary(by 167213 dollars) in year 0.
+```{r, include = F, cache = T}
+lm.s <- lm(salary~yearID + lgID, data = salaries)
+summary(lm.s)
+-271424769 + 2000 * 136738
+```
+
+### 5. Fit a similar model, except modelling salary on a log-scale. Once again, interpret the fitted model. 
+
+For every unit increase in the yearID, the salary will increase by 7.454%. In addition, being in the National League will decrease the salary by 4.834%, 
+```{r, include = F, cache = T}
+options(scipen = 5)
+salaries$logsal <- log(salaries$salary + 1)
+log.s <- lm(logsal~yearID + lgID, data = salaries)
+
+summary(log.s)
+
+(exp(0.071897)-1)*100
+(exp(-0.049554)-1)*100
+```
+### 6. Which of the previous two models appears to be a better fit? Explain
+
+The model with salary on the log-scale seems to be a better fit, not only because the R-squared value is larger, but because when it comes to salaries, the log-scale tends to make the largest salaries more comparable to a lower salary.
+
+
+
+### 7. Joining Teams table with Salaries table.
+
+I first use a sub-query to join the Teams table with the Salaries table, where I also filter for data in the year 2016. Then I can use "GROUP BY" to group each team, SUM each team's salaries, and then "ORDER BY" to reorder the salaries in descending order. This produces the following table.
+```{r, echo = F, cache = T}
+team.salary <- dbGetQuery(con, '
+SELECT j.teamID, SUM(j.salary) as sum
+FROM (SELECT *
+FROM Salaries 
+JOIN Teams
+ON Salaries.teamID = Teams.teamID and Salaries.yearID = Teams.yearID
+WHERE Salaries.yearID = 2016) j
+GROUP BY teamID
+ORDER BY sum DESC
+')
+
+
+team.salary
+```
+
+
+### 8. Extract a dataframe that has, for each combination of yearID and teamID, the total salary of that team in that year, and also the league the team played in. Find the number of rows in this dataframe.
+
+We can use a similar query as the previous one but instead selecting for distinct columns, removing the filter for 2016, and adding the lgID column. There are 907 rows in this dataframe.
+
+```{r, echo = F, cache = T}
+team.salyear <- dbGetQuery(con, '
+SELECT DISTINCT Salaries.teamID, Salaries.yearID, Salaries.lgID, sum(Salaries.salary) as sum
+FROM Salaries
+JOIN Teams
+ON Salaries.teamID = Teams.teamID AND Salaries.yearID = Teams.yearID
+GROUP BY Teams.teamID, Teams.yearID
+')
+head(team.salyear, 10)
+```
+
+### 9. For each league, create a plot with vertical boxplots that show the distribution of the total team salaries of one year(in millions of dollars).
+
+```{r, echo = F,warning = F, message= F, cache = T}
+library(ggplot2)
+library(dplyr)
+library(grid)
+library(gridExtra)
+team.salyear <- mutate(team.salyear, salary = sum/1000000)
+team.salyear$yearID <- as.factor(team.salyear$yearID)
+
+
+AL <- ggplot(subset(team.salyear, lgID %in% "AL"), aes(x=yearID, y = salary)) + geom_boxplot() + theme_bw() + labs(title = "Salary each year for AL", x = "Years", y = "Salary(in millions of dollars)") + ylim(0, 500) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+NL <- ggplot(subset(team.salyear, lgID %in% "NL"), aes(x=yearID, y = salary)) + geom_boxplot() + theme_bw() + labs(title = "Salary each year for NL", x = "Years", y = "Salary(in millions of dollars)") + ylim(0,500) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+grid.arrange(AL, NL, ncol = 2)
+```
+
+
+### 10. How many times has the World Series winner been from the American League, and how many times from the National League? Find the average salary of the World Series winning team within each league.
+
+17 times from the American League, 13 times from the National League. The average salary of the WS winning team in the AL is 77,596,664 dollars and 73,004,014 in the NL. 
+
+```{r, include = FALSE, cache = T}
+WS <- dbGetQuery(con, '
+SELECT j.yearID, j.teamID, j.lgID as league, sum(j.salary) as total_salary
+FROM (SELECT *
+      FROM SeriesPost se
+      JOIN Salaries sa
+      ON se.teamIDwinner = sa.teamID AND se.yearID = sa.yearID AND se.round = "WS") j
+GROUP BY teamID, yearID
+ORDER BY yearID 
+')
+
+WS %>% count(league)
+c(mean(subset(WS, league %in% "NL")$total_salary), mean(subset(WS, league %in% "AL")$total_salary))
+
+
+WS %>% group_by(league) %>% summarize(mean(total_salary))
+```
+
+
+### 11. Create a plot of total salaries of all teams in each and salary of the World Series winning team each year. Draw any conclusions about the salaries of the winning team.
+
+Looking at the position of the red and blue dots indicating WS winning teams, the salaries of these teams aren't always the highest paid teams for each year. Many times, the team that wins the World Series are actually one of the average paid teams, with the exception of the early 1990s to the early 2000s, where the winning teams were some of the top paid teams of that year.
+
+
+```{r, echo = F, cache = T}
+team.salyear <- dbGetQuery(con, '
+SELECT DISTINCT Salaries.teamID, Salaries.lgID, Salaries.yearID, sum(Salaries.salary)/1000000 as salary
+FROM Salaries
+JOIN Teams
+ON Salaries.teamID = Teams.teamID AND Salaries.yearID = Teams.yearID
+GROUP BY Teams.teamID, Teams.yearID
+')
+
+WS <- mutate(WS, salary = total_salary/1000000)
+
+WS.AL <- subset(WS, league %in% "AL")
+WS.NL <- subset(WS, league %in% "NL")
+
+plot(jitter(team.salyear$yearID), team.salyear$salary, pch = 4, ylab = "Salary in millions of dollars", xlab = "Years")
+
+points(WS.AL$yearID, WS.AL$salary, pch = 19, col = "blue" , cex = 1.5)
+points(WS.NL$yearID, WS.NL$salary, pch = 19, col = "red", cex = 1.5)
+text(WS$yearID, WS$salary, WS$league, pos = 3)
+```
+
+
+### 12. Create a plot showing the maximum team salaries for each year. Draw conclusions about the highest team salaries over time, and salaries within each league.
+
+
+There seems to be a positive trend in the max team salaries over time. More and more players are being paid higher salaries, which makes sense as the sport is more popularized and commercialized than ever before. The vast majority of the points in the plot indicates that the American League has most of the highest team salaries compared to the National League, with only 5 teams from the National League being the max salary team in the MLB from 1985 to 2016.
+
+
+```{r, echo = F, cache = T}
+max <- dbGetQuery(con, '
+SELECT a.yearID as year, MAX(a.sum)/1000000 as max_salary, a.lgID as league 
+FROM (SELECT DISTINCT Salaries.teamID, Salaries.lgID, Salaries.yearID, sum(Salaries.salary) as sum
+FROM Salaries
+JOIN Teams
+ON Salaries.teamID = Teams.teamID AND Salaries.yearID = Teams.yearID
+GROUP BY Teams.teamID, Teams.yearID) a
+GROUP BY yearID
+')
+max$color[max$league == "AL"] <- "blue"
+max$color[max$league == "NL"] <- "red"
+plot(max$year, max$max_salary, col = max$color, xlab = "Year", ylab = "Max Salary in millions of dollars", main = "Max team salary in each year")
+
+```
+
+### 13. Create a data frame with the number of All Star players on the World Series winning team for each year. Find the 5 years with the most All Star players on the winning team, and create a plot of the data frame. 
+
+The five years with the most All Star players on the winning team is 1939, 1947, 1960, 1961, 1962. 
+
+```{r, echo = F, cache = T}
+
+star <- dbGetQuery(con, '
+SELECT yearID, teamID, count(playerID) as count
+FROM (SELECT * 
+      FROM AllstarFull al
+      JOIN SeriesPost sp
+      ON al.teamID = sp.teamIDwinner AND sp.round = "WS" AND al.yearID = sp.yearID) a
+GROUP BY yearID, teamID
+ORDER BY count DESC
+')
+
+head(star, 5)
+
+ggplot(star, aes(x = yearID, y = count)) + geom_point() + theme_bw()
+```
+
+### 14. Has the distribution of the number of home runs hit by players in a given year changed over time? Now consider individual players over time. Do players tend to hit progressively more home runs throughout their career? If not, then what trends do you notice over time? Only consider players with at least a 10 year batting history.
+
+
+There does seem to be a positive trend in the number of home runs hit by players each year, with more and more home runs hit on average compared to previous years.
+
+
+```{r, echo = F, cache = T}
+hr <- dbGetQuery(con, '
+SELECT yearID, sum(HR) as homeruns
+FROM Batting
+GROUP BY yearID
+')
+
+ggplot(hr, aes(x = yearID, y = homeruns)) + geom_point() + theme_bw()
+
+```
+
+I plotted the home runs that each player that had at least 10 entries in the Batting table as boxplots with the x-axis being the number of years they've been in the league. That way, we can see the distribution of home runs as a player progresses through their career. There aren't any indications that players progressively hit more home runs as they stay in the league longer. However, it looks like players do improve in the first few seasons before they start to decline. 
+
+```{r, echo = F, cache = T}
+play <- dbGetQuery(con, '
+SELECT yearID, playerID, HR as homerun
+FROM Batting
+WHERE playerID in 
+    (SELECT playerID
+    FROM Batting
+    GROUP BY playerID HAVING COUNT(playerID) >= 10)
+ORDER BY playerID
+')
+
+
+play$count <- c(0)
+count <- 1
+for (i in 2:nrow(play)){
+  
+  if (play[i-1,2] == play[i,2]){
+        play[i-1,4] <- count 
+        count <- count + 1
+       
+  } else {
+   
+    play[i-1,4] <- count
+    count <- 1
+  }
+}
+play[nrow(play),4] <- count
+play$count <- as.factor(play$count)
+
+ggplot(play, aes(x = count, y = homerun, col = count)) + geom_boxplot() + theme_bw() + labs(x = "Years batted", y = "Homeruns hit") + theme(legend.position = "none")
+```
+
+
+
+### 15. Pose another question of your own, of comparable difficulty. 
+
+I was interested in whether players make less errors as they progress throughout their career. As players become veterans, do they make less mistakes while out in the field? The boxplot below shows players that have at least 8 years worth of fielding experience and the errors they committed. 
+
+It doesn't look like there is a very noticeable trend in making less errors as players progress through their career, although it does looke slightly like a downward trend. 
+
+
+```{r, echo = F, cache = T}
+error <- dbGetQuery(con, '
+SELECT yearID, playerID, E as errors
+FROM FieldingPost
+WHERE playerID in 
+    (SELECT playerID
+    FROM FieldingPost
+    GROUP BY playerID HAVING COUNT(playerID) >= 8)
+ORDER BY playerID
+')
+
+
+error$count <- c(0)
+count <- 1
+for (i in 2:nrow(error)){
+  
+  if (error[i-1,2] == error[i,2]){
+        error[i-1,4] <- count 
+        count <- count + 1
+       
+  } else {
+   
+    error[i-1,4] <- count
+    count <- 1
+  }
+}
+error[nrow(error), ] <- count
+error$count <- as.factor(error$count)
+
+ggplot(error, aes(x = count, y = jitter(errors), col = count)) + geom_boxplot() + theme_bw() + labs(x = "Years Fielded", y = "Errors committed") + theme(legend.position = "none")
+``` 
+
+
+
+
+
+```{r, echo = F, warning = F, cache = T}
+dbDisconnect(con)
+```
+

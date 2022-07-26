@@ -1,0 +1,778 @@
+---
+title: 'Project #3 stat319'
+author: "Alan Lin"
+date: "4/8/2022"
+output: pdf_document
+---
+
+```{r, echo = F, warning= F, message= F}
+library(XML)
+library(dplyr)
+library(maps)
+library(grDevices)
+library(ggplot2)
+library(gridExtra)
+library(grid)
+```
+
+
+```{r, echo = F, cache = T}
+
+fact <- xmlParse("C:/Users/super/Downloads/factbook.xml")
+
+root <- xmlRoot(fact)
+
+r <- getNodeSet(root, '//field[@id = "f2091"]/rank')
+
+countryCodes <- sapply(r, function(r) xmlGetAttr(r, "country"))
+mort <- sapply(r, function(x) as.numeric(xmlGetAttr(x, "number")))
+
+infant <- data.frame(country = countryCodes, mortality = mort) 
+```
+
+
+```{r, echo = F, cache = T}
+p <- getNodeSet(root, '//field[@id = "f2119"]/rank')
+
+countryCodes1 <- sapply(p, function(x) xmlGetAttr(x, "country"))
+pop <- sapply(p, function(x) as.numeric(xmlGetAttr(x, "number")))
+
+population <- data.frame(country = countryCodes1, population = pop) 
+
+
+```
+
+
+### 1a. How many of the countries in the CIA Factbook don't have an ISO 3166 code? 
+
+We can easily find the number of countries in the dataframe that have "-" as a value for ISO-3166. There are 28 countries that don't have an ISO 3166 code.
+
+
+### 1b. How many of these "countries" don't have a CIA Factbook 2-letter country abbreviation, either?
+
+We can also quickly find this by adding a second condition: is there a "-" for the cia column in the dataframe, as well as having "-" for ISO-3166? There are 6 countries that fulfill these two conditions. 
+
+```{r, cache =T, include = F, eval = T}
+c <- getNodeSet(root, '//appendix[@name = "cross-reference list of country data codes"]/table/row/cell[1]')
+c1 <- getNodeSet(root, '//appendix[@name = "cross-reference list of country data codes"]/table/row/cell[3]')
+
+
+content <- sapply(c, function(x) xmlGetAttr(x, "content") )
+cia <- sapply(c, function(x) xmlGetAttr(x, "country") )
+iso <- sapply(c1, function(x) xmlGetAttr(x, "content"))
+
+
+cross <- data.frame(country = content, cia = cia, iso3166 = iso)
+
+length(which(cross$iso3166=="-"))
+
+length(which(cross$cia == '-' & cross$iso3166 == '-'))
+```
+
+### 2a. Create a histogram of infant mortality rates, and describe its shape. 
+
+The histogram is heavily right skewed, with most of the countries having low infant mortality rates. Since it is so skewed, the median is a better estimate for the center of the data. The median infant mortality rate is probably around 15 deaths/1000 live births a year.
+
+```{r, echo = F, fig.height = 3, fig.width = 6, cache = T}
+hist(infant$mortality, xlab = "Mortality rates", main = "Histogram of infant mortality rates")
+
+```
+
+### 3. Describe your process of finding and cleaning this data.
+
+After a quick Google search, this data was taken from a GitHub folder at https://gist.github.com/tadast/8827699 that contained countries with their ISO3166 Alpha-2 code, Alpha-3 code, UN M49, average latitude, and average longitude. The original column names weren't very programming-friendly, so after using dplyr to select for the three columns that I wanted - the ISO3166 Alpha-2 code, average latitude, and average longitude - I renamed the column names to "iso3166", "latitude", and "longitude". 
+
+```{r, include = F, eval = T, cache = T}
+
+
+geo <- read.csv("C:/Users/super/Downloads//countries_codes_and_coordinates.csv")
+
+geo <- geo %>% select(c("Alpha.2.code", "Latitude..average.", "Longitude..average."))
+
+colnames(geo) <- c("iso3166", "latitude","longitude")
+
+geo$iso3166 <- gsub(" ", "", geo$iso3166)
+
+
+
+```
+### 4. Merging 4 datatables together. Describe any issues that come up and how it was handled. 
+
+The geographical dataframe had isocodes that had an empty character right before the actual code, so when merging, it wasn't actually matching it. Therefore, I needed to take out the whitespaces first before joining. I achieved this by using the gsub function in base R. Also, I used the dataframe with the most rows as the left table in each left join, which was the cross-reference list of country data codes, since left joins keeps all rows even if there are no matches. dplyr would automatically assign a "NA" value when there is no match. 
+
+```{r, echo = F, cache = T, message=  F}
+
+merge <- cross %>% left_join(., population, by = c("cia"= "country")) %>% left_join(., infant, by = c("cia"= "country")) %>% left_join(., geo) %>%  arrange(., country)
+
+```
+
+
+### 5. Find the mean mortality rate for all countries with population less than 10 million, and for those countries with population greater than 50 million. 
+
+By subsetting the merged dataset for all countries with population value less than 10 million or more than 50 million, I could then use the mean function and the na.rm = T option to find the mean mortality rate. 
+
+This turns out to be 18.8623 deaths/1000 live births for countries with population less than 10 million and 25.786 for countries with population greater than 50 million. 
+
+```{r, include = F}
+mean(subset(merge, population < 10000000)$mortality, na.rm = T)
+mean(subset(merge, population > 50000000)$mortality, na.rm = T)
+```
+
+### 6. Create a table showing how many countries fall into each level of your discretized mortality rates. Also explain how and why you selected the intervals to define the factor levels. 
+
+```{r, include=F, eval = T, cache = T}
+quantile(merge$mortality, c(0, 0.5, 0.7, 0.9, 0.95, 0.997, 1), na.rm = T)
+
+
+l <-  c("Bottom 50%", "50-70%", "70-90%","90-95%", "95-99.7%", "Top 0.3%" )
+cut <- cut(merge$mortality, breaks = c(1.81, 13.9850, 27.2340, 59.5150, 72.6755, 108.2199, 117.23), labels = l)
+
+```
+
+There are 117 countries in the bottom 50% of the world's mortality rates. They make up a large percentage of the total number of countries in the dataset. The next group spans from the 50th percentile to the 70th percentile, which has 47 countries. The 70th to the 90th percentile has 46 countries. Now, even though these aren't confidence intervals, I thought it would be entertaining to look at commonly used confidence intervals for statistical inference such as 90% and 95%. I chose to look at the 99.7th percentile just because of the CLT rule for 3 standard deviations away from the sample mean. 12 countries are in the top 90th-95th percentile, 11 countries are in the 95th-99.7th percentile, and 1 country is in the top 0.3% of mortality rates.
+
+```{r, echo = F, cache = T}
+table(cut)
+```
+### 7. Create a world map, with colored circles showing infant mortality rates. Include a legend showing that colors correspond to what intervals - or quantiles - of the mortality rates. 
+
+The world map uses the infant mortality data, creates a column that has the colors attributed to each group as designated from before. The colors go from a light pink to a dark purple. That means the lighter the color, the smaller the infant mortality rate is. As we can see, most of Europe (pretty developed countries) have light pink circles, while third-world countries have comparatively higher infant mortality rates, with only country, Afghanistan having the highest infant mortality rate, being at the top 0.3% in the world.
+
+```{r, echo = F, cache = T, fig.height = 4, fig.width = 8, warning = F}
+
+world <- map_data("world")
+baseMap <- ggplot() + 
+  geom_map(
+    data = world, map = world, 
+    aes(long, lat, map_id = region),
+    color = "black", fill = "lightgray", size = 0.1
+  ) + 
+  theme_minimal()
+
+
+merge$cut <- cut
+
+colors <- c("pink","plum","salmon","maroon3","purple","purple4")
+
+
+s <- merge[complete.cases(merge),]
+
+baseMap + 
+  geom_point(data = s,
+             aes(x = longitude, y = latitude, color = cut)) +
+  scale_color_manual(values = c(colors)) +
+  labs(x = "longitude",
+       y = "latitude", 
+       title = "World Map",
+       color = "Percentiles")
+
+
+```
+
+
+### 8. Create another map, this time where the area of each colored circles corresponds to the population of the corresponding ccountry. 
+
+This accurately reflects the population size of each country, with China, India, and the US being the largest circles, as expected. The data still reflects the infant mortality rate, with more developed countries having lower mortality rates.
+
+
+```{r, echo = F, cache = T, fig.height = 4, fig.width = 8}
+percentiles <- function(interest){
+  a <- unname(quantile(merge[, interest], c(0, 0.5, 0.7, 0.9, 0.95, 0.997, 1), na.rm = T))
+  
+  cut <- cut(merge[,interest], breaks = a, labels = l)
+  merge$cut <- cut
+  s <- merge[complete.cases(merge),]
+  area <- sqrt(s$population)
+  f <- scale(area, F, T) + 1.5
+
+
+  baseMap + 
+    geom_point(data = s,
+             aes(x = longitude, y = latitude, color = cut), size = f) +
+    scale_color_manual(values = c(colors)) +
+    labs(x = "longitude",
+       y = "latitude", 
+       title = paste("World Map, percentiles for ", interest),
+       color = "Percentiles") + 
+    guides(color = guide_legend(override.aes = list(size = 6)))
+  
+}
+
+percentiles("mortality")
+
+```
+
+
+### 9. Include the code of your kmeans() function in the Appendix of your report. Then apply your k-means clustering algorithm to the three variables: latitude, longitude, infant mortality. Create a map with an equal sized circle on each country, where the circle color represents the k-means group classification.
+
+
+The k-means algorithm works by taking in a k-value for the number of classifications that we want, as well as a matrix. We should have removed any rows in the matrix that has incomplete data (NA values) because that would mess up the Euclidean distance calculations and calculation of the mean for the new centroids. 
+
+On the map, the black dots represent the centroids at the end of the k-means clustering algorithm. The countries seem to cluster pretty well, with one group in the Pacific Islands/Americas, one in Europe/North Africa, and the fourth group in Asia/Oceania. 
+
+
+```{r, echo = F, cache = T, fig.height = 4, fig.width = 8, warning = F}
+kmeans <- function(k, x, returnCent = FALSE){
+  
+
+  
+  p <- ncol(x)  ## get # col
+  n <- nrow(x)  ## get # row
+  
+  stand <- matrix(as.numeric(scale(x)), n, p) ## standardized matrix
+  #stand <- as.matrix(x)  
+  
+
+  
+  rows <- sample(nrow(stand), k, replace = F) ## randomly select
+  
+  centroids <- stand[rows,] ## initialize the centroids
+  
+  old <- sample(1:k, n, replace = T)
+  
+  count <- 1
+  
+  while (TRUE){
+    
+    groups <- c()
+    
+    
+    
+    for (i in 1:n){
+       
+       
+       g <- which.min(apply(apply(centroids, 1, function(x){
+          (stand[i,] - x)^2
+         
+       }), 2, function(x){sqrt(sum(x))}))
+    
+       groups <- c(groups, g)
+       
+       
+    } 
+    
+    oldcentroids <- centroids
+    
+    centroids <- matrix(c(sapply(1:k, function(x) {
+      l <- stand[which(groups == x),]
+      apply(l, 2, mean)
+    })), ncol = p, nrow = k, byrow = T)
+    
+    
+    if(identical(oldcentroids, centroids)) break
+    
+  
+  }
+  
+   if(returnCent) return(centroids)
+   return(groups)
+}
+
+a <- merge[,5:7]
+a <- a[complete.cases(a),]
+
+
+center <- attributes(scale(a))$'scaled:center'
+scale <- attributes(scale(a))$'scaled:scale'
+
+
+set.seed(10)
+
+category <- kmeans(4, a)
+
+set.seed(10)
+cents <- kmeans(4,a, TRUE)
+
+
+a <- cbind(a,category)
+
+a1 <- data.frame(a)
+
+a1$ccolor <- 0
+col <- c("pink","plum","maroon3","purple4")
+
+
+for(i in 1:4){
+    a1[which(a1$category == i), "ccolor"] <- col[i]
+    
+  }
+
+c1 <- a1$ccolor
+long1 <- a1$longitude
+lat1 <- a1$latitude
+
+
+clat <- cents[,2] * scale[2] + center[2]
+clong <- cents[,3] * scale[3] + center[3]
+
+l1 <- c("1","2","3","4")
+ccolors <- c("pink","plum","maroon3", "purple4")
+
+
+a1$category <- as.factor(a1$category)
+
+baseMap + 
+  geom_point(data = a1,
+             aes(x = longitude, y = latitude, color = category)) +
+  geom_point(aes(x = clong, y = clat), color = "black", size = 4) +
+  labs(x = "longitude",
+       y = "latitude", 
+       title = "World Map grouped by k-means")
+
+```
+
+
+### 10. Execute your regionalMap() function for several different values of k, and include the resulting maps.
+
+While the groupings are overlapping with one another, the polygons created are indeed the convex hulls of each group. Since the groupings aren't based solely on geographical location(latitude and longitude), that means that the countries in the overlapping groups are more closely related to other countries in their respective group based on mortality rate. Still, the overwhelming majority of the grouping seems to be based on geographical location, rather than their mortality rates. 
+
+```{r, cache= T, echo = F, message= F, warning =F, fig.height =3, fig.width = 6}
+
+regionalMap <- function(k){
+  
+  a <- merge[,4:7]
+  a <- a[complete.cases(a),]
+  
+  
+  center <- attributes(scale(a[,2:4]))$'scaled:center'
+  scale <- attributes(scale(a[,2:4]))$'scaled:scale'
+  
+  
+  set.seed(10)
+  class <- kmeans(k, a[,2:4])
+  
+  
+  set.seed(10)
+  cents <- kmeans(k,a[,2:4], TRUE)
+  
+  a$class <- as.factor(class)
+  
+  op <- par(cex = 0.7)
+  area <- sqrt(a$population)
+  f <- scale(area, F, T) + 2
+  
+  long <- a$longitude
+  lat <- a$latitude
+  
+  clat <- cents[,2] * scale[2] + center[2]
+  clong <- cents[,3] * scale[3] + center[3]
+
+  
+  map <- baseMap + 
+  geom_point(data = a,
+             aes(x = longitude, y = latitude, color = class), size = f) +
+  geom_point(aes(x = clong, y = clat), color = "black", size = 4) +
+  labs(x = "longitude",
+       y = "latitude", 
+       title = "World Map grouped by k-means")
+  
+  
+  hull <- lapply(1:k, function(x){
+    l <- a[which(class == x),]
+    ind <- chull(l$longitude,l$latitude)
+    hull_x <- l[ind,"longitude"]
+    hull_y <- l[ind,"latitude"]
+    return(list(hull_x=hull_x, hull_y = hull_y))
+  })
+  
+  
+   testhull <- sapply(hull, "[[", 'hull_x')
+   hullx <- unlist(sapply(hull, "[[", 'hull_x'))
+   hully <- unlist(sapply(hull, "[[", 'hull_y'))
+
+   colors <- sapply(1:k, function(x) length(testhull[[x]]))
+   colors1 <- unlist(sapply(1:k, function(x) rep(x,colors[x])))
+    
+   polymap <- data.frame(hullx = hullx, hully = hully, colors = colors1)
+  
+    
+   map + geom_point(data = polymap, aes(x = hullx, y = hully), show.legend= F) + geom_polygon(data = polymap, aes(x=  hullx, y = hully, fill = factor(colors), alpha = 0.2)) + guides(alpha = "none", fill = "none")
+    
+}
+
+
+now <- Sys.time()
+
+regionalMap(3)
+
+
+regionalMap(4)
+regionalMap(5)
+
+then <- Sys.time()
+
+then - now
+
+```
+
+## Extensions to the project.
+
+First, although it wasn't very intensive, I added another parameter to the kmeans function in order to return the centroids at the end of the algorithm. This allows me to specify when I want the matrix of centroids in order to add the resulting centroid for each group onto the world map. using the returned matrix of centroids, we have to unscale the latitude and longitudes, so by just saving the center as well as the standard deviation from the attributes in the scale function, we can quickly figure out the respective latitude and longitudes of the centroids. It's easy to see where these centroids are because they are clearly marked out with a color different from the groups. Again, it should be mentioned that these centroids are only geographically placed, and not entirely indicative of the clustered group. That means that although there are several points that are geographically closer to the centroids of another group, it is the mortality rate that is keeping the country in another group.
+
+Another extension I did was to figure out how to use ggplot instead of base R to draw the world maps and the polygons to depict the convex hulls of each group. This took a while to figure out, but because ggplot cannot continuously overlay like base R can, I had to figure out how to create a data frame that houses the longitudes, latitudes, and group assignment for each point in the convex hull. After that, it was a matter of plotting the points to the map using the separate data frame for the polygons. I have to say, there was a lot of fidgeting with the amount of lapply, sapply, and unlisting but because I avoided using for loops, the vectorized functions allow me to generate regional maps with relative speed, at around 1 second for each function call. See the appendix for the new updated regionalMap. The baseR is also included in the appendix.
+
+I looked through the CIA Factbook for other demographics of interest and chose to look at life expectancy at birth. Essentially, all I'm doing is grabbing the values from the XML sheet and then left joining to the master merge data, in order to create a large dataframe with multiple demographics of interest. I could then tweak my regionalMap function to take in one or multiple variables of interest as a vector. For example, if I wanted to do k-means for two demographics of interest, like mortality and life expectancy at birth, I would pass in those two variables in a vector to the function. Of course, we'll still use population to size the circles on the map, and the longitude/latitudes of each country, so we simply grab a subset of the merge dataframe of those variables to do the k-means assignments.
+
+```{r, echo = F,  fig.height =3, fig.width = 6}
+regionalMap1 <- function(k, interest){
+  
+  getCol <- c("population", "latitude","longitude",interest)
+  
+  a <- merge[ ,getCol]
+  a <- a[complete.cases(a),]
+  
+  
+  
+  center <- attributes(scale(a[-1]))$'scaled:center'
+  scale <- attributes(scale(a[-1]))$'scaled:scale'
+  
+  
+  set.seed(10)
+  class <- kmeans(k, a[-1])
+  
+  
+  set.seed(10)
+  cents <- kmeans(k,a[-1], TRUE)
+  
+  a$class <- as.factor(class)
+  
+  op <- par(cex = 0.7)
+  area <- sqrt(a$population)
+  f <- scale(area, F, T) + 2
+  
+  long <- a$longitude
+  lat <- a$latitude
+  
+  clat <- cents[,1] * scale[1] + center[1]
+  clong <- cents[,2] * scale[2] + center[2]
+  
+  if(length(interest) > 1) {
+    t <- paste(interest, collapse = " & ")
+    map <- baseMap + 
+      geom_point(data = a,
+                 aes(x = longitude, y = latitude, color = class), size = f) +
+      geom_point(aes(x = clong, y = clat), color = "black", size = 4) +
+      labs(x = "longitude",
+           y = "latitude", 
+           title = paste("World Map grouped by k-means: ", t))
+    
+  } else {
+    
+    
+    map <- baseMap + 
+      geom_point(data = a,
+                 aes(x = longitude, y = latitude, color = class), size = f) +
+      geom_point(aes(x = clong, y = clat), color = "black", size = 4) +
+      labs(x = "longitude",
+           y = "latitude", 
+           title = paste("World Map grouped by k-means: ", interest))
+    
+  }
+  
+  hull <- lapply(1:k, function(x){
+    l <- a[which(class == x),]
+    ind <- chull(l$longitude,l$latitude)
+    hull_x <- l[ind,"longitude"]
+    hull_y <- l[ind,"latitude"]
+    return(list(hull_x=hull_x, hull_y = hull_y))
+  })
+  
+  
+  testhull <- sapply(hull, "[[", 'hull_x')
+  hullx <- unlist(sapply(hull, "[[", 'hull_x'))
+  hully <- unlist(sapply(hull, "[[", 'hull_y'))
+  
+  colors <- sapply(1:k, function(x) length(testhull[[x]]))
+  colors1 <- unlist(sapply(1:k, function(x) rep(x,colors[x])))
+  
+  polymap <- data.frame(hullx = hullx, hully = hully, colors = colors1)
+  
+  
+  map + 
+    geom_point(data = polymap, 
+               aes(x = hullx, y = hully), show.legend= F) +
+    geom_polygon(data = polymap, 
+                 aes(x=  hullx, y = hully, fill = factor(colors), 
+                     alpha = 0.2)) + guides(alpha = "none", fill = "none")  + 
+    theme(legend.text = element_text(size = 16),
+          legend.title = element_text(size = 16),
+          legend.key.height = unit(1, 'cm'),
+          legend.key.width = unit(1,'cm'))
+  
+}
+
+
+expect <- getNodeSet(root, '//field[@id = "f2102"]/rank')
+
+life <- sapply(expect, function(x) as.numeric(xmlGetAttr(x, "number")))
+lifeCodes <- sapply(expect, function(x) xmlGetAttr(x, "country"))
+
+lifeExpectancy <- data.frame(country = lifeCodes, lifeExpectancy = life)
+
+merge <- merge %>% left_join(lifeExpectancy, by = c("cia" = "country"))
+
+
+
+```
+
+Here, we have an example of using two variables of interest to do k-means sorting. As before, most of these are arranged in clusters geographically, but something about either life expectancy or mortality is making it much more similar to its assignment than countries that are closer in vicinity. In the example below, many of the clusters overlap and have huge ranges, such as the one from the Pacific Islands to Africa, and the Americas to Oceania.
+
+```{r, echo = F, fig.height=3,fig.width=6}
+i <- c("lifeExpectancy","mortality")
+regionalMap1(4,i)
+```
+
+Additionally, I wrote a function called percentiles which takes in a variable of interest, calculates the percentiles (see Deliverable 8), and then displays the labels for each country depending on which group they fall into. This helps us visualize geographically how some demographics of interest are in relation to one another. For example, we already saw that mortality rate is higher in third-world countries, so their percentiles are at the higher end of the spectrum, but if we look at life expectancy at birth, then we see third-world countries, especially in Africa are at the bottom of the spectrum (life expectancy is low in these countries compared to developed countries in Europe).
+
+```{r, echo = F, fig.height = 3, fig.width= 6}
+percentiles("lifeExpectancy")
+
+```
+
+
+
+I was also interested in creating a Shiny app that will display dynamic plots, similar to ones generated throughout this project, which can be viewed at this link: 
+
+https://alan-lin-stat-projects.shinyapps.io/project3-stat319/.  
+
+
+I allowed users to change the seed in order to select different centroids, while allowing them to change the number of groups desired from the k-means algorithm. Again, the time it takes to generate these maps are pretty quickly, usually rendering after a second or two. I also wanted to allow users to change the demographic of interest, rather than just the mortality rate. Here, we allow for up to three variables of interest to be chosen. Because it's much easier to select variables in a Shiny app, I've compiled many of the variables in the CIA factbook for use in the Shiny app, including: mortality, lifeExpectancy, healthSpending, fertilityRate, obesity, and many more. This is possible by just reusing the regionalMap1 function, which takes in a vector of variables (stored from Shiny input) and outputting the world map into the app. I also created a tab along the top to click from to allow users to explore the percentiles/histograms of a variable of interest. Finally, by clicking the three bars at the top of the page, there is a separate page that acts as the glossary for the variables of interest, in case any user wants to know what their working with. 
+
+As is the case with most of these maps, many of the variables (regardless of number of variables chosen) resulted in a clustering that seemed to be based on geographical location. Of course, there are exceptions to the groups which would be due to the demographic of interest. 
+
+### Appendix 
+
+K-means function, slightly changed to not only take a data frame and the number of groups, but also a boolean to return the centroids at the end of the clustering. 
+
+```{r}
+kmeans <- function(k, x, returnCent = FALSE){
+  
+
+  
+  p <- ncol(x)  ## get # col
+  n <- nrow(x)  ## get # row
+  
+  stand <- matrix(as.numeric(scale(x)), n, p) ## standardized matrix
+  #stand <- as.matrix(x)  
+  
+
+  
+  rows <- sample(nrow(stand), k, replace = F) ## randomly select
+  
+  centroids <- stand[rows,]  ## initialize the centroids
+  
+  
+  while (TRUE){
+    
+    groups <- c() ## initialize assignments
+    
+    for (i in 1:n){
+       
+       
+       g <- which.min(apply(apply(centroids, 1, function(x){
+          (stand[i,] - x)^2
+         
+       }), 2, function(x){sqrt(sum(x))})) ### find the closest centroid in Euclidean distance
+    
+       groups <- c(groups, g) ## append to growing list of classifications
+       
+       
+    } 
+    
+    oldcentroids <- centroids ## save a copy of the old centroids
+    
+    centroids <- matrix(c(sapply(1:k, function(x) {
+      l <- stand[which(groups == x),]
+      apply(l, 2, mean)
+    })), ncol = p, nrow = k, byrow = T)
+    
+    ## calculate the mean of the new centroids
+    ## compare to the old centroid. 
+    
+    ## if identical, that means the assignments were the same in current iteration and the previous, so break out of the loop.
+    if(identical(oldcentroids, centroids)) break
+    
+  
+  }
+  
+    ## return the centroids if prompted to
+  
+   if(returnCent) return(centroids)
+  
+    ## otherwise return the assignemnts.
+   return(groups)
+}
+```
+
+
+Old function for Deliverable 10 using base R
+
+```{r, eval = F}
+regionalMap <- function(k){
+      
+      ## keep centroids and assignments the same
+      seed <- sample(1:10000, 1) 
+      
+      
+      a <- merge[,4:7] ## merge has the entire dataframe,
+      # this is just grabbing the 3 columns needed : population, lat, long, and mortality rate
+      
+      ## find the complete cases, no NA's 
+      a <- a[complete.cases(a),]
+      
+      
+      ## need these two to "unscale" centroids in order to plot them
+      center <- attributes(scale(a[,2:4]))$'scaled:center' 
+      scale <- attributes(scale(a[,2:4]))$'scaled:scale'
+      
+      
+      
+      
+      ## get assignments from kmeans
+      set.seed(seed)
+      class <- kmeans(k, a[,2:4])
+      
+      
+      ## get centroids from kmeans
+      set.seed(seed)
+      cents <- kmeans(k,a[,2:4], TRUE)
+      
+      a$class <- class
+      
+      op <- par(cex = 1)
+      area <- sqrt(a$population)
+      f <- scale(area, F, T) + 2
+      
+      long <- a$longitude
+      lat <- a$latitude
+      
+      clat <- cents[,2] * scale[2] + center[2]
+      clong <- cents[,3] * scale[3] + center[3]
+      
+      col <- rainbow(k, alpha = 0.2)
+      
+      a$color <- 0
+      
+      for(i in 1:k){
+        a[which(a$class == i), "color"] <- col[i]
+        
+      }
+      
+      c <- a$color
+      l <- 1:k
+      
+      
+      map("world")
+      symbols(x = long, y = lat, add = T, inches = F, circles = f, fg = c, bg = c)
+      legend(x = -180, y = 80, legend = l, col = col, pch = 19, title = "Classification")
+      symbols(x = clong, y = clat, add = T, inches = F, circles = rep(3, k), fg = "black", bg= "black")
+      
+      
+      for(i in 1:k){
+        l <- a[which(class == i),]
+        ind <- chull(l$longitude,l$latitude)
+        hull_x <- l[ind,"longitude"]
+        hull_y <- l[ind,"latitude"]
+        points(hull_x, hull_y, pch = 19, col = 'black')
+        
+        
+        polygon(hull_x, hull_y, border = 'black', col = col[i])
+        
+      }
+      
+      
+      
+}
+
+```
+
+updated 
+```{r}
+regionalMap1 <- function(k, interest){
+  
+  getCol <- c("population", "latitude","longitude",interest)
+  
+  a <- merge[,getCol]
+  a <- a[complete.cases(a),]
+  
+  
+  
+  center <- attributes(scale(a[-1]))$'scaled:center'
+  scale <- attributes(scale(a[-1]))$'scaled:scale'
+  
+  
+  set.seed(10)
+  class <- kmeans(k, a[-1])
+  
+  
+  set.seed(10)
+  cents <- kmeans(k,a[-1], TRUE)
+  
+  a$class <- as.factor(class)
+  
+  op <- par(cex = 0.7)
+  area <- sqrt(a$population)
+  f <- scale(area, F, T) + 2
+  
+  long <- a$longitude
+  lat <- a$latitude
+  
+  clat <- cents[,1] * scale[1] + center[1]
+  clong <- cents[,2] * scale[2] + center[2]
+
+  if(length(interest) > 1) {
+    t <- paste(interest, collapse = " & ")
+    map <- baseMap + 
+    geom_point(data = a,
+             aes(x = longitude, y = latitude, color = class), size = f) +
+    geom_point(aes(x = clong, y = clat), color = "black", size = 4) +
+    labs(x = "longitude",
+       y = "latitude", 
+       title = paste("World Map grouped by k-means: ", t))
+  
+  } else {
+  
+  
+  map <- baseMap + 
+  geom_point(data = a,
+             aes(x = longitude, y = latitude, color = class), size = f) +
+  geom_point(aes(x = clong, y = clat), color = "black", size = 4) +
+  labs(x = "longitude",
+       y = "latitude", 
+       title = paste("World Map grouped by k-means: ", interest))
+  
+  }
+  
+  hull <- lapply(1:k, function(x){
+    l <- a[which(class == x),]
+    ind <- chull(l$longitude,l$latitude)
+    hull_x <- l[ind,"longitude"]
+    hull_y <- l[ind,"latitude"]
+    return(list(hull_x=hull_x, hull_y = hull_y))
+  })
+  
+  
+   testhull <- sapply(hull, "[[", 'hull_x')
+   hullx <- unlist(sapply(hull, "[[", 'hull_x'))
+   hully <- unlist(sapply(hull, "[[", 'hull_y'))
+
+   colors <- sapply(1:k, function(x) length(testhull[[x]]))
+   colors1 <- unlist(sapply(1:k, function(x) rep(x,colors[x])))
+    
+   polymap <- data.frame(hullx = hullx, hully = hully, colors = colors1)
+  
+    
+   map + 
+     geom_point(data = polymap, 
+                aes(x = hullx, y = hully), show.legend= F) +
+     geom_polygon(data = polymap, 
+                aes(x=  hullx, y = hully, fill = factor(colors), 
+                    alpha = 0.2)) + guides(alpha = "none", fill = "none")  + 
+     theme(legend.text = element_text(size = 16),
+          legend.title = element_text(size = 16),
+          legend.key.height = unit(1, 'cm'),
+          legend.key.width = unit(1,'cm'))
+    
+}
+```
+
