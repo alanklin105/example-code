@@ -8,10 +8,16 @@ output: pdf_document
 library(ggplot2)
 library(tidyr)
 ```
+## See Shiny app here : https://alan-lin-stat-projects.shinyapps.io/project3-stat319/
 
 ## Introduction 
 
-Spam emails are quite common in this digital world. Many of these are sent via mass emailing and are often detected by some algorithm in most emailing services. In this project, we attempt to identify several properties of spam emails that can help us classify emails as spam or non-spam, through a Naive Bayesian approach. See the attached paper to understand what this approach implies for us. We will be using data from Spam Assassin, https://spamassassin.apache.org/doc.html. While they have their own classification algorithm that they sell, they have also compiled over 9000 emails for training/testing algorithms. In the downloads, emails are split between being spam or not spam(known as ham). Thus, we can use these emails to build our own algorithm. We will see the Type I and II error rates and use that to judge how well our classifier is doing.
+Spam emails are quite common in this digital world. Many of these are sent via mass emailing and are often detected by some algorithm in most emailing services.
+In this project, we attempt to identify several properties of spam emails that can help us classify emails as spam or non-spam, through a Naive Bayesian approach.
+See the attached paper to understand what this approach implies for us. We will be using data from Spam Assassin, https://spamassassin.apache.org/doc.html. 
+While they have their own classification algorithm that they sell, they have also compiled over 9000 emails for training/testing algorithms. 
+In the downloads, emails are split between being spam or not spam(known as ham). Thus, we can use these emails to build our own algorithm.
+We will see the Type I and II error rates and use that to judge how well our classifier is doing.
 
 ### Deliverable 1: 
 
